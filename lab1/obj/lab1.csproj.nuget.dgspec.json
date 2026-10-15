@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\PR\\lab1\\lab1.csproj": {}
+    "D:\\PR\\Programare-in-retea\\lab1\\lab1.csproj": {}
   },
   "projects": {
-    "D:\\PR\\lab1\\lab1.csproj": {
+    "D:\\PR\\Programare-in-retea\\lab1\\lab1.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\PR\\lab1\\lab1.csproj",
+        "projectUniqueName": "D:\\PR\\Programare-in-retea\\lab1\\lab1.csproj",
         "projectName": "lab1",
-        "projectPath": "D:\\PR\\lab1\\lab1.csproj",
+        "projectPath": "D:\\PR\\Programare-in-retea\\lab1\\lab1.csproj",
         "packagesPath": "C:\\Users\\Alexa\\.nuget\\packages\\",
-        "outputPath": "D:\\PR\\lab1\\obj\\",
+        "outputPath": "D:\\PR\\Programare-in-retea\\lab1\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Alexa\\AppData\\Roaming\\NuGet\\NuGet.Config"
