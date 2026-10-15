@@ -7,14 +7,18 @@ using System.Threading;
 
 // Usage:
 //   dotnet run -c Release -- gen numbers.txt 5000000
+//   dotnet run -c Release -- split numbers.txt E:\task2
 //   dotnet run -c Release -- 1a numbers.txt 1
 //   dotnet run -c Release -- 1b numbers.txt
 //   dotnet run -c Release -- 1c numbers.txt 4
+//   dotnet run -c Release -- 2 E:\task2 1
 internal static class Program
 {
     private const int BufferSize = 1 << 20;
     private const int BatchSize = 10_000;
     private const int MaxQueuedBatches = 100;
+    private const int Task2FileCount = 8;
+    private const long NumbersPerTask2File = 6_250_000;
 
     private static int Main(string[] args)
     {
@@ -32,6 +36,10 @@ internal static class Program
                     RequireArgumentCount(args, 3);
                     Generate(args[1], long.Parse(args[2]));
                     return 0;
+                case "split":
+                    RequireArgumentCount(args, 3);
+                    SplitForTask2(args[1], args[2]);
+                    return 0;
                 case "1a":
                     RequireArgumentCount(args, 3);
                     RunTask1a(args[1], int.Parse(args[2]));
@@ -43,6 +51,10 @@ internal static class Program
                 case "1c":
                     RequireArgumentCount(args, 3);
                     RunTask1c(args[1], int.Parse(args[2]));
+                    return 0;
+                case "2":
+                    RequireArgumentCount(args, 3);
+                    RunTask2(args[1], int.Parse(args[2]));
                     return 0;
                 default:
                     Console.Error.WriteLine("Unknown mode: " + args[0]);
@@ -64,9 +76,11 @@ internal static class Program
     {
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  gen <file> <count>");
+        Console.Error.WriteLine("  split <file> <directory>");
         Console.Error.WriteLine("  1a <file> <threads>");
         Console.Error.WriteLine("  1b <file>");
         Console.Error.WriteLine("  1c <file> <workers>");
+        Console.Error.WriteLine("  2 <directory> <workers>");
     }
 
     private static void RequireArgumentCount(string[] args, int count)
@@ -94,6 +108,48 @@ internal static class Program
             writer.WriteLine(rnd.Next(-1_000_000, 1_000_001));
 
         Console.WriteLine($"Wrote {count} numbers to {path}");
+    }
+
+    private static void SplitForTask2(string sourcePath, string outputDirectory)
+    {
+        Directory.CreateDirectory(outputDirectory);
+        using var reader = new StreamReader(sourcePath);
+        var writers = new StreamWriter[Task2FileCount];
+
+        try
+        {
+            for (int i = 0; i < Task2FileCount; i++)
+            {
+                string path = Path.Combine(outputDirectory, $"numbers_{i + 1}.txt");
+                writers[i] = new StreamWriter(path, false, new System.Text.UTF8Encoding(false), BufferSize)
+                {
+                    NewLine = "\n"
+                };
+            }
+
+            long total = 0;
+            string? line;
+            while ((line = reader.ReadLine()) is not null)
+            {
+                if (total >= Task2FileCount * NumbersPerTask2File)
+                    throw new ArgumentException("Input contains more than 50000000 numbers.");
+
+                int fileIndex = (int)(total / NumbersPerTask2File);
+                writers[fileIndex].WriteLine(line);
+                total++;
+            }
+
+            if (total != Task2FileCount * NumbersPerTask2File)
+                throw new ArgumentException(
+                    $"Input must contain exactly {Task2FileCount * NumbersPerTask2File} numbers; found {total}.");
+
+            Console.WriteLine($"Wrote {Task2FileCount} files to {outputDirectory}");
+        }
+        finally
+        {
+            foreach (StreamWriter? writer in writers)
+                writer?.Dispose();
+        }
     }
 
     // ---------- Task 1a ----------
@@ -238,18 +294,14 @@ internal static class Program
         var stopwatch = Stopwatch.StartNew();
         StartIndexThreads(threadCount, numbers.Length, (id, start, end) =>
         {
-            int localNegative = 0, localPositive = 0, localZero = 0;
             for (int i = start; i < end; i++)
             {
-                if (numbers[i] < 0) localNegative++;
-                else if (numbers[i] > 0) localPositive++;
-                else localZero++;
-            }
-            lock (sync)
-            {
-                negative += localNegative;
-                positive += localPositive;
-                zero += localZero;
+                lock (sync)
+                {
+                    if (numbers[i] < 0) negative++;
+                    else if (numbers[i] > 0) positive++;
+                    else zero++;
+                }
             }
         }, threads);
         JoinAll(threads);
@@ -357,6 +409,96 @@ internal static class Program
         PrintResult("1c", workerCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
+    // ---------- Task 2 ----------
+    private static void RunTask2(string directory, int workerCount)
+    {
+        if (workerCount is not (1 or 2 or 4))
+            throw new ArgumentException("Task 2 workers must be 1, 2, or 4.");
+
+        var paths = new string[Task2FileCount];
+        for (int i = 0; i < paths.Length; i++)
+        {
+            paths[i] = Path.Combine(directory, $"numbers_{i + 1}.txt");
+            if (!File.Exists(paths[i]))
+                throw new FileNotFoundException("Missing Task 2 input file.", paths[i]);
+        }
+
+        var results = new Counts[workerCount];
+        var errors = new Exception?[workerCount];
+        var threads = new Thread[workerCount];
+        var stopwatch = Stopwatch.StartNew();
+
+        for (int i = 0; i < workerCount; i++)
+        {
+            int id = i;
+            int start = paths.Length * id / workerCount;
+            int end = paths.Length * (id + 1) / workerCount;
+            threads[i] = new Thread(() =>
+            {
+                try
+                {
+                    Counts counts = default;
+                    for (int fileIndex = start; fileIndex < end; fileIndex++)
+                        counts += CountWholeFile(paths[fileIndex]);
+                    results[id] = counts;
+                }
+                catch (Exception ex)
+                {
+                    errors[id] = ex;
+                }
+            });
+            threads[i].Start();
+        }
+
+        JoinAll(threads);
+        stopwatch.Stop();
+
+        foreach (Exception? error in errors)
+        {
+            if (error is not null)
+                throw new IOException("Task 2 failed while reading the input files.", error);
+        }
+
+        Counts total = Add(results);
+        PrintResult("2", workerCount, total, stopwatch.ElapsedMilliseconds, true);
+    }
+
+    private static Counts CountWholeFile(string path)
+    {
+        byte[] data = File.ReadAllBytes(path);
+        Counts counts = default;
+        bool negative = false;
+        bool inNumber = false;
+        int value = 0;
+
+        foreach (byte b in data)
+        {
+            if (b >= (byte)'0' && b <= (byte)'9')
+            {
+                value = value * 10 + b - (byte)'0';
+                inNumber = true;
+            }
+            else if (b == (byte)'-')
+            {
+                negative = true;
+            }
+            else if (b == (byte)'\n')
+            {
+                if (inNumber)
+                    counts.Add(value, negative);
+
+                negative = false;
+                inNumber = false;
+                value = 0;
+            }
+        }
+
+        if (inNumber)
+            counts.Add(value, negative);
+
+        return counts;
+    }
+
     private static void JoinAll(Thread[] threads)
     {
         foreach (Thread thread in threads)
@@ -392,6 +534,14 @@ internal static class Program
         public long Zero;
 
         public long Total => Negative + Positive + Zero;
+
+        public static Counts operator +(Counts left, Counts right) =>
+            new Counts
+            {
+                Negative = left.Negative + right.Negative,
+                Positive = left.Positive + right.Positive,
+                Zero = left.Zero + right.Zero
+            };
 
         public void Add(int value, bool negative)
         {
