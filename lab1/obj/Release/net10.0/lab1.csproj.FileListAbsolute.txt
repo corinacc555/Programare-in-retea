@@ -27,3 +27,18 @@ D:\PR\Programare-in-retea\lab1\obj\Release\net10.0\refint\lab1.dll
 D:\PR\Programare-in-retea\lab1\obj\Release\net10.0\lab1.pdb
 D:\PR\Programare-in-retea\lab1\obj\Release\net10.0\lab1.genruntimeconfig.cache
 D:\PR\Programare-in-retea\lab1\obj\Release\net10.0\ref\lab1.dll
+D:\Programare in retea\lab1\bin\Release\net10.0\lab1.exe
+D:\Programare in retea\lab1\bin\Release\net10.0\lab1.deps.json
+D:\Programare in retea\lab1\bin\Release\net10.0\lab1.runtimeconfig.json
+D:\Programare in retea\lab1\bin\Release\net10.0\lab1.dll
+D:\Programare in retea\lab1\bin\Release\net10.0\lab1.pdb
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.GeneratedMSBuildEditorConfig.editorconfig
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.AssemblyInfoInputs.cache
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.AssemblyInfo.cs
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.csproj.CoreCompileInputs.cache
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.sourcelink.json
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.dll
+D:\Programare in retea\lab1\obj\Release\net10.0\refint\lab1.dll
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.pdb
+D:\Programare in retea\lab1\obj\Release\net10.0\lab1.genruntimeconfig.cache
+D:\Programare in retea\lab1\obj\Release\net10.0\ref\lab1.dll
