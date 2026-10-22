@@ -2,16 +2,17 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 
 // Usage:
-//   dotnet run -c Release -- gen numbers.txt 5000000
+//   dotnet run -c Release -- gen numbers.txt 50000000
 //   dotnet run -c Release -- split numbers.txt E:\task2
 //   dotnet run -c Release -- 1a numbers.txt 1
 //   dotnet run -c Release -- 1b numbers.txt
 //   dotnet run -c Release -- 1c numbers.txt 4
-//   dotnet run -c Release -- 2 E:\task2 1
+//   dotnet run -c Release -- 2 F:\task2 1
 internal static class Program
 {
     private const int BufferSize = 1 << 20;
@@ -30,6 +31,7 @@ internal static class Program
                 return 1;
             }
 
+            // Select the requested lab task based on the first argument.
             switch (args[0].ToLowerInvariant())
             {
                 case "gen":
@@ -68,6 +70,8 @@ internal static class Program
                                    ex is IOException)
         {
             Console.Error.WriteLine("Error: " + ex.Message);
+            if (ex.InnerException is not null)
+                Console.Error.WriteLine("  " + ex.InnerException.Message);
             return 1;
         }
     }
@@ -96,6 +100,7 @@ internal static class Program
     }
 
     // ---------- Data generation ----------
+    // Create the input file with random integers in the required range.
     private static void Generate(string path, long count)
     {
         if (count < 0)
@@ -110,6 +115,7 @@ internal static class Program
         Console.WriteLine($"Wrote {count} numbers to {path}");
     }
 
+    // Split the large dataset into fixed-size chunks for task 2.
     private static void SplitForTask2(string sourcePath, string outputDirectory)
     {
         Directory.CreateDirectory(outputDirectory);
@@ -153,11 +159,13 @@ internal static class Program
     }
 
     // ---------- Task 1a ----------
+    // Each thread reads a different byte range and counts numbers in parallel.
     private static void RunTask1a(string path, int threadCount)
     {
         ValidateThreadCount(threadCount, "threads");
         long fileLength = new FileInfo(path).Length;
         var results = new Counts[threadCount];
+        var errors = new Exception?[threadCount];
         var threads = new Thread[threadCount];
         var stopwatch = Stopwatch.StartNew();
 
@@ -166,17 +174,34 @@ internal static class Program
             int id = i;
             long start = fileLength * id / threadCount;
             long end = fileLength * (id + 1) / threadCount;
-            threads[i] = new Thread(() => results[id] = CountRange(path, start, end));
+            threads[i] = new Thread(() =>
+            {
+                try
+                {
+                    results[id] = CountRange(path, start, end);
+                }
+                catch (Exception ex)
+                {
+                    errors[id] = ex;
+                }
+            });
             threads[i].Start();
         }
 
         JoinAll(threads);
         stopwatch.Stop();
 
+        foreach (Exception? error in errors)
+        {
+            if (error is not null)
+                throw new IOException("Task 1a failed while reading the input file.", error);
+        }
+
         Counts total = Add(results);
         PrintResult("1a", threadCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
+    // Count only the values inside the byte interval assigned to this thread.
     private static Counts CountRange(string path, long start, long end)
     {
         Counts counts = default;
@@ -216,20 +241,22 @@ internal static class Program
                     value = value * 10 + b - (byte)'0';
                     inNumber = true;
                 }
-                else if (b == (byte)'-')
+                else if (b == (byte)'-' && !negative && !inNumber)
                 {
                     negative = true;
                 }
-                else if (b == (byte)'\n')
+                else if (b == (byte)'\n' && inNumber)
                 {
-                    if (inNumber)
-                        counts.Add(value, negative);
-
+                    counts.Add(value, negative);
                     negative = false;
                     inNumber = false;
                     value = 0;
                     if (absolutePosition + i + 1 >= end)
                         return counts;
+                }
+                else if (b != (byte)'\r')
+                {
+                    throw InvalidInput(path, absolutePosition + i);
                 }
             }
             absolutePosition += read;
@@ -242,6 +269,7 @@ internal static class Program
     }
 
     // ---------- Task 1b ----------
+    // Compare three synchronization styles for the same counting task.
     private static void RunTask1b(string path)
     {
         int[] numbers = LoadNumbers(path);
@@ -265,6 +293,7 @@ internal static class Program
         return numbers.ToArray();
     }
 
+    // Unsynchronized updates are intentionally wrong; this is a benchmark of race conditions.
     private static void RunSharedUnsynchronised(int[] numbers, int threadCount, int run)
     {
         int negative = 0, positive = 0, zero = 0;
@@ -310,6 +339,7 @@ internal static class Program
                           $"zero={zero} total={negative + positive + zero} time_ms={stopwatch.ElapsedMilliseconds}");
     }
 
+    // Each thread keeps its own partial total, then we merge the results.
     private static void RunPerThreadCounters(int[] numbers, int threadCount)
     {
         var results = new Counts[threadCount];
@@ -343,11 +373,13 @@ internal static class Program
     }
 
     // ---------- Task 1c ----------
+    // Producer/consumer model: the producer reads batches and workers count them.
     private static void RunTask1c(string path, int workerCount)
     {
         ValidateThreadCount(workerCount, "workers");
-        var queue = new BlockingCollection<int[]>(MaxQueuedBatches);
+        var queue = new BlockingCollection<List<string>>(MaxQueuedBatches);
         var results = new Counts[workerCount];
+        var workerErrors = new Exception?[workerCount];
         Exception? producerError = null;
         var stopwatch = Stopwatch.StartNew();
 
@@ -356,19 +388,19 @@ internal static class Program
             try
             {
                 using var reader = new StreamReader(path);
-                var batch = new List<int>(BatchSize);
+                var batch = new List<string>(BatchSize);
                 string? line;
                 while ((line = reader.ReadLine()) is not null)
                 {
-                    batch.Add(int.Parse(line));
+                    batch.Add(line);
                     if (batch.Count == BatchSize)
                     {
-                        queue.Add(batch.ToArray());
-                        batch.Clear();
+                        queue.Add(batch);
+                        batch = new List<string>(BatchSize);
                     }
                 }
                 if (batch.Count > 0)
-                    queue.Add(batch.ToArray());
+                    queue.Add(batch);
             }
             catch (Exception ex)
             {
@@ -387,9 +419,25 @@ internal static class Program
             workers[i] = new Thread(() =>
             {
                 Counts counts = default;
-                foreach (int[] batch in queue.GetConsumingEnumerable())
-                    foreach (int number in batch)
-                        counts.Add(number, number < 0);
+                // A failed worker keeps draining the queue so the reader never blocks forever.
+                foreach (List<string> batch in queue.GetConsumingEnumerable())
+                {
+                    if (workerErrors[id] is not null)
+                        continue;
+
+                    try
+                    {
+                        foreach (string line in batch)
+                        {
+                            int number = int.Parse(line);
+                            counts.Add(number, number < 0);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        workerErrors[id] = ex;
+                    }
+                }
                 results[id] = counts;
             });
         }
@@ -405,11 +453,18 @@ internal static class Program
         if (producerError is not null)
             throw new IOException("Producer failed while reading the input file.", producerError);
 
+        foreach (Exception? error in workerErrors)
+        {
+            if (error is not null)
+                throw new FormatException("Worker failed while parsing the input file.", error);
+        }
+
         Counts total = Add(results);
         PrintResult("1c", workerCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
     // ---------- Task 2 ----------
+    // Each worker processes a subset of the already-split files and sums the partial counts.
     private static void RunTask2(string directory, int workerCount)
     {
         if (workerCount is not (1 or 2 or 4))
@@ -463,6 +518,7 @@ internal static class Program
         PrintResult("2", workerCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
+    // Parse a whole file and accumulate negative/positive/zero counts.
     private static Counts CountWholeFile(string path)
     {
         byte[] data = File.ReadAllBytes(path);
@@ -471,25 +527,28 @@ internal static class Program
         bool inNumber = false;
         int value = 0;
 
-        foreach (byte b in data)
+        for (int i = 0; i < data.Length; i++)
         {
+            byte b = data[i];
             if (b >= (byte)'0' && b <= (byte)'9')
             {
                 value = value * 10 + b - (byte)'0';
                 inNumber = true;
             }
-            else if (b == (byte)'-')
+            else if (b == (byte)'-' && !negative && !inNumber)
             {
                 negative = true;
             }
-            else if (b == (byte)'\n')
+            else if (b == (byte)'\n' && inNumber)
             {
-                if (inNumber)
-                    counts.Add(value, negative);
-
+                counts.Add(value, negative);
                 negative = false;
                 inNumber = false;
                 value = 0;
+            }
+            else if (b != (byte)'\r')
+            {
+                throw InvalidInput(path, i);
             }
         }
 
@@ -498,6 +557,9 @@ internal static class Program
 
         return counts;
     }
+
+    private static FormatException InvalidInput(string path, long position) =>
+        new FormatException($"Invalid input in {path} at byte {position}.");
 
     private static void JoinAll(Thread[] threads)
     {
@@ -523,10 +585,13 @@ internal static class Program
         Console.WriteLine($"{task} workers={workers} {counts} " +
                           $"total={counts.Total} time_ms={elapsedMilliseconds}" +
                           (includeMemory
-                              ? $" peak_memory_mb={Process.GetCurrentProcess().PeakWorkingSet64 / (1024 * 1024)}"
+                              ? " peak_memory_mb=" +
+                                (Process.GetCurrentProcess().PeakWorkingSet64 / (1024.0 * 1024.0))
+                                    .ToString("F1", CultureInfo.InvariantCulture)
                               : string.Empty));
     }
 
+    // Partial totals used by each worker; final results are merged before printing.
     private struct Counts
     {
         public long Negative;
