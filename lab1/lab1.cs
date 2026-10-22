@@ -12,7 +12,7 @@ using System.Threading;
 //   dotnet run -c Release -- 1a numbers.txt 1
 //   dotnet run -c Release -- 1b numbers.txt
 //   dotnet run -c Release -- 1c numbers.txt 4
-//   dotnet run -c Release -- 2 E:\task2 1
+//   dotnet run -c Release -- 2 F:\task2 1
 internal static class Program
 {
     private const int BufferSize = 1 << 20;
@@ -31,6 +31,7 @@ internal static class Program
                 return 1;
             }
 
+            // Select the requested lab task based on the first argument.
             switch (args[0].ToLowerInvariant())
             {
                 case "gen":
@@ -99,6 +100,7 @@ internal static class Program
     }
 
     // ---------- Data generation ----------
+    // Create the input file with random integers in the required range.
     private static void Generate(string path, long count)
     {
         if (count < 0)
@@ -113,6 +115,7 @@ internal static class Program
         Console.WriteLine($"Wrote {count} numbers to {path}");
     }
 
+    // Split the large dataset into fixed-size chunks for task 2.
     private static void SplitForTask2(string sourcePath, string outputDirectory)
     {
         Directory.CreateDirectory(outputDirectory);
@@ -156,6 +159,7 @@ internal static class Program
     }
 
     // ---------- Task 1a ----------
+    // Each thread reads a different byte range and counts numbers in parallel.
     private static void RunTask1a(string path, int threadCount)
     {
         ValidateThreadCount(threadCount, "threads");
@@ -197,6 +201,7 @@ internal static class Program
         PrintResult("1a", threadCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
+    // Count only the values inside the byte interval assigned to this thread.
     private static Counts CountRange(string path, long start, long end)
     {
         Counts counts = default;
@@ -264,6 +269,7 @@ internal static class Program
     }
 
     // ---------- Task 1b ----------
+    // Compare three synchronization styles for the same counting task.
     private static void RunTask1b(string path)
     {
         int[] numbers = LoadNumbers(path);
@@ -287,6 +293,7 @@ internal static class Program
         return numbers.ToArray();
     }
 
+    // Unsynchronized updates are intentionally wrong; this is a benchmark of race conditions.
     private static void RunSharedUnsynchronised(int[] numbers, int threadCount, int run)
     {
         int negative = 0, positive = 0, zero = 0;
@@ -332,6 +339,7 @@ internal static class Program
                           $"zero={zero} total={negative + positive + zero} time_ms={stopwatch.ElapsedMilliseconds}");
     }
 
+    // Each thread keeps its own partial total, then we merge the results.
     private static void RunPerThreadCounters(int[] numbers, int threadCount)
     {
         var results = new Counts[threadCount];
@@ -365,6 +373,7 @@ internal static class Program
     }
 
     // ---------- Task 1c ----------
+    // Producer/consumer model: the producer reads batches and workers count them.
     private static void RunTask1c(string path, int workerCount)
     {
         ValidateThreadCount(workerCount, "workers");
@@ -455,6 +464,7 @@ internal static class Program
     }
 
     // ---------- Task 2 ----------
+    // Each worker processes a subset of the already-split files and sums the partial counts.
     private static void RunTask2(string directory, int workerCount)
     {
         if (workerCount is not (1 or 2 or 4))
@@ -508,6 +518,7 @@ internal static class Program
         PrintResult("2", workerCount, total, stopwatch.ElapsedMilliseconds, true);
     }
 
+    // Parse a whole file and accumulate negative/positive/zero counts.
     private static Counts CountWholeFile(string path)
     {
         byte[] data = File.ReadAllBytes(path);
@@ -580,6 +591,7 @@ internal static class Program
                               : string.Empty));
     }
 
+    // Partial totals used by each worker; final results are merged before printing.
     private struct Counts
     {
         public long Negative;
