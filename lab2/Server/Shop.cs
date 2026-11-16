@@ -1,9 +1,13 @@
 namespace CoffeeShop;
 
-// The stock of the shop. Every read or change of it happens under stockLock,
-// so that checking "is there enough?" and taking the products is one step.
+// Stocul magazinului. Orice citire sau schimbare a lui se face sub stockLock,
+// ca "verific daca ajunge" si "scad din stoc" sa fie un singur pas,
+// si ca o livrare si o comanda simultane sa nu piarda nicio modificare.
 public class Shop
 {
+    // Cand un produs scade sub aceasta cantitate, providerul primeste alerta.
+    public const int LowStock = 5;
+
     public static readonly Dictionary<string, int> PrepSeconds = new()
     {
         ["coffee"] = 4,
@@ -26,10 +30,15 @@ public class Shop
             return string.Join(" ", stock.Select(p => $"{p.Key}={p.Value}"));
     }
 
-    // Takes all the items, or none of them. When one product is short,
-    // returns false with that product and how many of it are left.
-    public bool TryTake(Dictionary<string, int> items, out string shortProduct, out int left)
+    // Ia toate produsele sau niciunul.
+    // Daca un produs nu ajunge: false, cu produsul si cate au ramas din el.
+    // nowLow = produsele care tocmai au scazut sub LowStock (pentru alerta).
+    public bool TryTake(Dictionary<string, int> items, out string shortProduct, out int left,
+                        out Dictionary<string, int> nowLow)
     {
+        shortProduct = "";
+        left = 0;
+        nowLow = new Dictionary<string, int>();
         lock (stockLock)
         {
             foreach (var (product, qty) in items)
@@ -42,38 +51,28 @@ public class Shop
                 }
             }
             foreach (var (product, qty) in items)
+            {
+                bool wasEnough = stock[product] >= LowStock;
                 stock[product] -= qty;
+                if (wasEnough && stock[product] < LowStock)
+                    nowLow[product] = stock[product];
+            }
         }
-        shortProduct = "";
-        left = 0;
         return true;
     }
 
-    // Parses "<product> <qty> <product> <qty> ..." from parts[1..].
-    public static bool TryParseItems(string[] parts, out Dictionary<string, int> items, out string error)
+    // Pune produse in stoc: livrarea providerului sau produsele unei comenzi anulate.
+    public void Add(Dictionary<string, int> items)
     {
-        items = new Dictionary<string, int>();
-        error = "";
-        if (parts.Length < 3 || parts.Length % 2 == 0)
-        {
-            error = "usage: ORDER <product> <quantity> [<product> <quantity> ...]";
-            return false;
-        }
-        for (int i = 1; i < parts.Length; i += 2)
-        {
-            string product = parts[i].ToLowerInvariant();
-            if (!PrepSeconds.ContainsKey(product))
-            {
-                error = $"unknown product '{parts[i]}'";
-                return false;
-            }
-            if (!int.TryParse(parts[i + 1], out int qty) || qty <= 0)
-            {
-                error = $"quantity '{parts[i + 1]}' is not a positive number";
-                return false;
-            }
-            items[product] = items.GetValueOrDefault(product) + qty;
-        }
-        return true;
+        lock (stockLock)
+            foreach (var (product, qty) in items)
+                stock[product] += qty;
+    }
+
+    // Produsele care sunt acum sub LowStock (trimise providerului cand se conecteaza).
+    public Dictionary<string, int> LowProducts()
+    {
+        lock (stockLock)
+            return stock.Where(p => p.Value < LowStock).ToDictionary(p => p.Key, p => p.Value);
     }
 }

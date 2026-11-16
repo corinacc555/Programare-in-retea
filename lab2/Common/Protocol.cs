@@ -3,24 +3,24 @@ using System.Text;
 
 namespace CoffeeShop;
 
-// The protocol is text: every message is one line of UTF-8, ended by '\n'.
-// TCP is a stream of bytes, so one Send is not one Receive: a message can arrive
-// in several pieces, or several messages in one piece. LineReader keeps the bytes
-// it has received until it sees '\n', and only then gives out a whole line.
+// Protocolul e text: fiecare mesaj e o linie UTF-8, terminata cu '\n'.
+// TCP e un flux de octeti, deci un Send nu inseamna un Receive: un mesaj poate veni
+// in mai multe bucati, sau mai multe mesaje intr-o singura bucata. LineReader pastreaza
+// octetii primiti pana vede '\n' si abia atunci da mai departe o linie intreaga.
 public class LineReader
 {
     public const int MaxLineBytes = 256;
 
     readonly Socket socket;
     readonly byte[] buffer = new byte[1024];
-    readonly List<byte> current = new();      // bytes of the line that is not complete yet
-    readonly Queue<string?> lines = new();     // complete lines; null = a line that was too long
+    readonly List<byte> current = new();      // octetii liniei care nu e inca completa
+    readonly Queue<string?> lines = new();     // linii complete; null = linie prea lunga
     bool tooLong;
 
     public LineReader(Socket socket) => this.socket = socket;
 
-    // Returns false when the other side closed the connection (Receive returned 0).
-    // line is null when the received line was longer than MaxLineBytes.
+    // Intoarce false cand cealalta parte a inchis conexiunea (Receive a intors 0).
+    // line e null cand linia primita a fost mai lunga de MaxLineBytes.
     public bool TryReadLine(out string? line)
     {
         while (lines.Count == 0)
@@ -47,7 +47,7 @@ public class LineReader
             tooLong = false;
         }
         else if (current.Count >= MaxLineBytes)
-            tooLong = true;                    // drop the rest of the line, up to its '\n'
+            tooLong = true;                    // aruncam restul liniei, pana la '\n'
         else
             current.Add(b);
     }
@@ -55,7 +55,7 @@ public class LineReader
 
 public static class LineWriter
 {
-    // Send may send only part of the bytes, so it is called until all of them are sent.
+    // Send poate trimite doar o parte din octeti, deci il apelam pana se trimit toti.
     public static void SendLine(Socket socket, string line)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");

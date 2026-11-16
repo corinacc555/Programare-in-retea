@@ -2,27 +2,8 @@ using System.Collections.Concurrent;
 
 namespace CoffeeShop;
 
-public class Order
-{
-    public int Id { get; }
-    public ClientConnection Client { get; }
-    public Dictionary<string, int> Items { get; }
-    public int Seconds { get; }
-
-    public Order(int id, ClientConnection client, Dictionary<string, int> items)
-    {
-        Id = id;
-        Client = client;
-        Items = items;
-        Seconds = items.Sum(p => Shop.PrepSeconds[p.Key] * p.Value);
-    }
-
-    public override string ToString() =>
-        $"#{Id} ({string.Join(", ", Items.Select(p => $"{p.Value} {p.Key}"))}, {Seconds}s)";
-}
-
-// Producer-consumer: the client threads put orders into the queue,
-// the workers take the oldest one and prepare it.
+// Producator-consumator: thread-urile clientilor (producatorii) pun comenzi in coada,
+// workerii (consumatorii) iau cea mai veche comanda si o pregatesc.
 public class Kitchen
 {
     readonly BlockingCollection<Order> queue = new(new ConcurrentQueue<Order>());   // FIFO
@@ -34,19 +15,42 @@ public class Kitchen
             new Thread(Work) { IsBackground = true, Name = $"worker-{i}" }.Start();
     }
 
+    // Interlocked: doi clienti care comanda simultan primesc numere diferite.
     public Order NewOrder(ClientConnection client, Dictionary<string, int> items) =>
         new(Interlocked.Increment(ref lastId), client, items);
 
     public void Enqueue(Order order) => queue.Add(order);
 
+    // Bucla unui worker: asteapta o comanda, o pregateste, apoi ia urmatoarea.
     void Work()
     {
         foreach (Order order in queue.GetConsumingEnumerable())
         {
-            Log.Write(order.Client.Endpoint, $"order {order} started by {Thread.CurrentThread.Name}");
-            Thread.Sleep(order.Seconds * 1000);    // the preparation is simulated by waiting
-            order.Client.Send($"READY {order.Id}");
-            Log.Write(order.Client.Endpoint, $"order #{order.Id} ready");
+            try
+            {
+                Prepare(order);
+            }
+            catch (Exception e)
+            {
+                // O eroare la o comanda nu trebuie sa omoare workerul.
+                Log.Write(order.Client.Endpoint, $"error in {Thread.CurrentThread.Name}: {e.Message}");
+            }
         }
+    }
+
+    void Prepare(Order order)
+    {
+        if (!order.TryStart())
+            return;    // anulata cat astepta in coada; produsele sunt deja inapoi in stoc
+
+        Log.Write(order.Client.Endpoint, $"order {order} started by {Thread.CurrentThread.Name}");
+        if (!order.WaitPreparation() || !order.TryFinish())
+        {
+            // Clientul a plecat: ce s-a pregatit se pierde, produsele le-a pus inapoi cine a anulat.
+            Log.Write(order.Client.Endpoint, $"order #{order.Id} stopped by {Thread.CurrentThread.Name}, the client is gone");
+            return;
+        }
+        order.Client.Send($"READY {order.Id}");
+        Log.Write(order.Client.Endpoint, $"order #{order.Id} ready");
     }
 }
