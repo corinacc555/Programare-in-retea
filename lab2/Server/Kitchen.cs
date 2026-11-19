@@ -2,55 +2,112 @@ using System.Collections.Concurrent;
 
 namespace CoffeeShop;
 
-// Producator-consumator: thread-urile clientilor (producatorii) pun comenzi in coada,
-// workerii (consumatorii) iau cea mai veche comanda si o pregatesc.
-public class Kitchen
+// Producator-consumator: thread-urile clientilor pun comenzi in coada (producatorii),
+// workerii iau cea mai veche comanda si o pregatesc (consumatorii).
+public static class Kitchen
 {
-    readonly BlockingCollection<Order> queue = new(new ConcurrentQueue<Order>());   // FIFO
-    int lastId;
+    // BlockingCollection peste un ConcurrentQueue = o coada FIFO sigura pentru thread-uri.
+    // Cand coada e goala, workerul asteapta.
+    static readonly BlockingCollection<Order> queue = new BlockingCollection<Order>(new ConcurrentQueue<Order>());
+    static int lastId = 0;
 
-    public Kitchen(int workers)
+    public static void StartWorkers(int count)
     {
-        for (int i = 1; i <= workers; i++)
-            new Thread(Work) { IsBackground = true, Name = $"worker-{i}" }.Start();
+        for (int i = 1; i <= count; i++)
+        {
+            Thread worker = new Thread(WorkerLoop);
+            worker.Name = "worker-" + i;
+            worker.IsBackground = true;
+            worker.Start();
+        }
     }
 
-    // Interlocked: doi clienti care comanda simultan primesc numere diferite.
-    public Order NewOrder(ClientConnection client, Dictionary<string, int> items) =>
-        new(Interlocked.Increment(ref lastId), client, items);
+    public static Order CreateOrder(ClientConnection client, Dictionary<string, int> items)
+    {
+        int id = Interlocked.Increment(ref lastId);   // doi clienti in acelasi timp primesc numere diferite
+        return new Order(id, client, items);
+    }
 
-    public void Enqueue(Order order) => queue.Add(order);
+    public static void AddToQueue(Order order)
+    {
+        queue.Add(order);
+    }
 
-    // Bucla unui worker: asteapta o comanda, o pregateste, apoi ia urmatoarea.
-    void Work()
+    // Apelata de thread-ul clientului cand clientul a plecat.
+    // Intoarce true cand comanda a fost anulata acum, deci produsele ei trebuie puse inapoi in stoc.
+    // Intoarce false cand era deja gata (sau deja anulata).
+    public static bool CancelOrder(Order order)
+    {
+        lock (order)
+        {
+            if (order.State == "ready" || order.State == "canceled")
+            {
+                return false;
+            }
+            order.State = "canceled";
+        }
+        order.CancelSignal.Set();   // daca un worker o pregateste acum, se trezeste imediat
+        return true;
+    }
+
+    // Ce face fiecare worker, la nesfarsit: ia cea mai veche comanda si o pregateste.
+    static void WorkerLoop()
     {
         foreach (Order order in queue.GetConsumingEnumerable())
         {
             try
             {
-                Prepare(order);
+                PrepareOrder(order);
             }
             catch (Exception e)
             {
                 // O eroare la o comanda nu trebuie sa omoare workerul.
-                Log.Write(order.Client.Endpoint, $"error in {Thread.CurrentThread.Name}: {e.Message}");
+                Log.Write(order.Client.Endpoint, "error in " + Thread.CurrentThread.Name + ": " + e.Message);
             }
         }
     }
 
-    void Prepare(Order order)
+    static void PrepareOrder(Order order)
     {
-        if (!order.TryStart())
-            return;    // anulata cat astepta in coada; produsele sunt deja inapoi in stoc
+        string worker = Thread.CurrentThread.Name ?? "worker";
 
-        Log.Write(order.Client.Endpoint, $"order {order} started by {Thread.CurrentThread.Name}");
-        if (!order.WaitPreparation() || !order.TryFinish())
+        if (!ChangeState(order, "waiting", "preparing"))
         {
-            // Clientul a plecat: ce s-a pregatit se pierde, produsele le-a pus inapoi cine a anulat.
-            Log.Write(order.Client.Endpoint, $"order #{order.Id} stopped by {Thread.CurrentThread.Name}, the client is gone");
+            return;   // a fost anulata cat astepta in coada: o sarim
+        }
+        Log.Write(order.Client.Endpoint, "order " + order + " started by " + worker);
+
+        // Pregatirea e simulata prin asteptare. Wait intoarce true daca
+        // comanda e anulata in timpul asteptarii, si atunci workerul se opreste imediat.
+        bool canceled = order.CancelSignal.Wait(order.Seconds * 1000);
+        if (canceled || !ChangeState(order, "preparing", "ready"))
+        {
+            // Ce s-a pregatit se pierde; produsele le-a pus inapoi cel care a anulat.
+            Log.Write(order.Client.Endpoint, "order #" + order.Id + " canceled, " + worker + " stops");
             return;
         }
-        order.Client.Send($"READY {order.Id}");
-        Log.Write(order.Client.Endpoint, $"order #{order.Id} ready");
+
+        if (order.Client.Send("READY " + order.Id))
+        {
+            Log.Write(order.Client.Endpoint, "order #" + order.Id + " ready");
+        }
+        else
+        {
+            Log.Write(order.Client.Endpoint, "order #" + order.Id + " ready, but the client is gone");
+        }
+    }
+
+    // Schimba starea doar daca este inca "from". Altfel intoarce false.
+    static bool ChangeState(Order order, string from, string to)
+    {
+        lock (order)
+        {
+            if (order.State != from)
+            {
+                return false;
+            }
+            order.State = to;
+            return true;
+        }
     }
 }
