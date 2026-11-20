@@ -3,64 +3,94 @@ using System.Text;
 
 namespace CoffeeShop;
 
-// The protocol is text: every message is one line of UTF-8, ended by '\n'.
-// TCP is a stream of bytes, so one Send is not one Receive: a message can arrive
-// in several pieces, or several messages in one piece. LineReader keeps the bytes
-// it has received until it sees '\n', and only then gives out a whole line.
-public class LineReader
+// Cod folosit de ambele programe (server si client) ca sa vorbeasca prin TCP.
+// Protocolul e text: fiecare mesaj e o linie UTF-8 care se termina cu '\n'.
+public static class Protocol
 {
     public const int MaxLineBytes = 256;
 
-    readonly Socket socket;
-    readonly byte[] buffer = new byte[1024];
-    readonly List<byte> current = new();      // bytes of the line that is not complete yet
-    readonly Queue<string?> lines = new();     // complete lines; null = a line that was too long
-    bool tooLong;
-
-    public LineReader(Socket socket) => this.socket = socket;
-
-    // Returns false when the other side closed the connection (Receive returned 0).
-    // line is null when the received line was longer than MaxLineBytes.
-    public bool TryReadLine(out string? line)
+    // Trimite un mesaj si pune '\n' la sfarsit.
+    // Send poate trimite doar o parte din octeti, deci il apelam pana se trimit toti.
+    public static void SendLine(Socket socket, string message)
     {
-        while (lines.Count == 0)
+        byte[] bytes = Encoding.UTF8.GetBytes(message + "\n");
+        int sent = 0;
+        while (sent < bytes.Length)
         {
-            int n = socket.Receive(buffer);
-            if (n == 0)
-            {
-                line = null;
-                return false;
-            }
-            for (int i = 0; i < n; i++)
-                Add(buffer[i]);
+            sent += socket.Send(bytes, sent, bytes.Length - sent, SocketFlags.None);
         }
-        line = lines.Dequeue();
-        return true;
-    }
-
-    void Add(byte b)
-    {
-        if (b == (byte)'\n')
-        {
-            lines.Enqueue(tooLong ? null : Encoding.UTF8.GetString(current.ToArray()).TrimEnd('\r'));
-            current.Clear();
-            tooLong = false;
-        }
-        else if (current.Count >= MaxLineBytes)
-            tooLong = true;                    // drop the rest of the line, up to its '\n'
-        else
-            current.Add(b);
     }
 }
 
-public static class LineWriter
+// TCP e un flux de octeti, deci un Send nu inseamna un Receive:
+// un mesaj poate veni in doua bucati, sau doua mesaje pot veni intr-o singura bucata.
+// LineReader pastreaza octetii primiti pana vede '\n' si abia atunci da linia mai departe.
+public class LineReader
 {
-    // Send may send only part of the bytes, so it is called until all of them are sent.
-    public static void SendLine(Socket socket, string line)
+    // Intors de ReadLine pentru o linie mai lunga de MaxLineBytes.
+    // O linie adevarata nu contine niciodata '\n', deci nu se poate confunda cu una.
+    public const string TooLong = "\n";
+
+    private readonly Socket socket;
+    private readonly byte[] buffer = new byte[1024];
+    private readonly List<byte> currentLine = new List<byte>();      // octetii liniei care nu e gata inca
+    private readonly Queue<string> readyLines = new Queue<string>(); // liniile deja complete
+    private bool skippingLongLine = false;                           // true cat timp aruncam restul unei linii prea lungi
+
+    public LineReader(Socket socket)
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(line + "\n");
-        int sent = 0;
-        while (sent < bytes.Length)
-            sent += socket.Send(bytes, sent, bytes.Length - sent, SocketFlags.None);
+        this.socket = socket;
+    }
+
+    // Asteapta urmatoarea linie intreaga.
+    // Intoarce null cand cealalta parte a inchis conexiunea (Receive a intors 0).
+    // Intoarce TooLong cand linia a fost mai lunga de MaxLineBytes.
+    public string? ReadLine()
+    {
+        while (readyLines.Count == 0)
+        {
+            int count = socket.Receive(buffer);
+            if (count == 0)
+            {
+                return null;
+            }
+            for (int i = 0; i < count; i++)
+            {
+                AddByte(buffer[i]);
+            }
+        }
+        return readyLines.Dequeue();
+    }
+
+    private void AddByte(byte b)
+    {
+        if (b == '\n')
+        {
+            // Sfarsitul unei linii: o dam mai departe, daca nu era o linie lunga pe care o aruncam.
+            // Decodam UTF-8 abia acum, ca o litera din 2 octeti venita in doua bucati sa nu se strice.
+            if (!skippingLongLine)
+            {
+                string line = Encoding.UTF8.GetString(currentLine.ToArray());
+                readyLines.Enqueue(line.TrimEnd('\r'));
+            }
+            currentLine.Clear();
+            skippingLongLine = false;
+        }
+        else if (skippingLongLine)
+        {
+            // Inca suntem in linia prea lunga: aruncam octetul.
+        }
+        else if (currentLine.Count == Protocol.MaxLineBytes)
+        {
+            // Linia e prea lunga. O anuntam imediat (nu abia cand vine '\n')
+            // si aruncam restul ei.
+            readyLines.Enqueue(TooLong);
+            currentLine.Clear();
+            skippingLongLine = true;
+        }
+        else
+        {
+            currentLine.Add(b);
+        }
     }
 }

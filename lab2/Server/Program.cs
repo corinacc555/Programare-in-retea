@@ -3,38 +3,88 @@ using System.Net.Sockets;
 
 namespace CoffeeShop;
 
-public static class Log
-{
-    public static void Write(string endpoint, string message) =>
-        Console.WriteLine($"{DateTime.Now:HH:mm:ss} [{endpoint}] {message}");
-}
-
 public static class Program
 {
     public static void Main(string[] args)
     {
-        if (args.Length != 1 || !int.TryParse(args[0], out int port) || port is < 1 or > 65535)
+        int port = ReadPort(args);
+        if (port == 0)
         {
             Console.WriteLine("Usage: Server <port>");
             return;
         }
 
-        var shop = new Shop();
-        var kitchen = new Kitchen(Environment.ProcessorCount);
-        Log.Write("server", $"stock: {shop.Menu()}");
-        Log.Write("server", $"{Environment.ProcessorCount} workers started");
+        Shop.LoadStock();
+        Log.Write("server", "stock: " + Shop.Menu());
 
-        var listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        listener.Bind(new IPEndPoint(IPAddress.Any, port));
-        listener.Listen(16);
-        Log.Write("server", $"listening on port {port}");
+        int workers = Environment.ProcessorCount;   // un worker pentru fiecare procesor logic
+        Kitchen.StartWorkers(workers);
+        Log.Write("server", workers + " workers started");
 
+        Socket? listener = StartListening(port);
+        if (listener == null)
+        {
+            return;
+        }
+        AcceptClients(listener);
+    }
+
+    // Intoarce portul din linia de comanda, sau 0 daca lipseste ori e gresit.
+    static int ReadPort(string[] args)
+    {
+        if (args.Length != 1)
+        {
+            return 0;
+        }
+        if (!int.TryParse(args[0], out int port) || port < 1 || port > 65535)
+        {
+            return 0;
+        }
+        return port;
+    }
+
+    // socket + bind + listen. Intoarce null daca portul nu poate fi folosit.
+    // Socket-ul care asculta doar accepta conexiuni; el nu trimite si nu primeste date.
+    static Socket? StartListening(int port)
+    {
+        Socket listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            // Any = toate placile de retea, ca sa se poata conecta si alte calculatoare.
+            listener.Bind(new IPEndPoint(IPAddress.Any, port));
+            listener.Listen(16);
+        }
+        catch (SocketException e)
+        {
+            Console.WriteLine("Cannot listen on port " + port + ": " + e.Message);
+            return null;
+        }
+        Log.Write("server", "listening on port " + port);
+        return listener;
+    }
+
+    // Thread-ul principal doar accepta conexiuni. Fiecare conexiune primeste thread-ul ei,
+    // ca thread-ul principal sa se poata intoarce imediat la Accept.
+    static void AcceptClients(Socket listener)
+    {
         while (true)
         {
-            Socket socket = listener.Accept();
-            // Every client gets its own thread, so this one can go back to Accept at once.
-            var client = new ClientConnection(socket, shop, kitchen);
-            new Thread(client.Run) { IsBackground = true, Name = $"client-{client.Endpoint}" }.Start();
+            Socket socket;
+            try
+            {
+                socket = listener.Accept();
+            }
+            catch (SocketException e)
+            {
+                // Un client care pica in timpul Accept nu trebuie sa opreasca serverul.
+                Log.Write("server", "accept failed: " + e.Message);
+                continue;
+            }
+
+            ClientConnection client = new ClientConnection(socket);
+            Thread thread = new Thread(client.Run);
+            thread.IsBackground = true;
+            thread.Start();
         }
     }
 }
