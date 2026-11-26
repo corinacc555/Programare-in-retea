@@ -1,0 +1,668 @@
+\documentclass[11pt, a4paper]{article}
+
+% --- PACKAGES ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[a4paper, margin=2.2cm, bottom=2.5cm, top=2.5cm]{geometry}
+\usepackage{lmodern}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{microtype}
+\usepackage{hyperref}
+
+% --- COLOR DEFINITIONS ---
+\definecolor{tumblue}{RGB}{0, 75, 145}
+\definecolor{darkgray}{RGB}{50, 50, 50}
+\definecolor{codebg}{RGB}{245, 247, 250}
+\definecolor{codeframe}{RGB}{210, 215, 225}
+\definecolor{chartblue}{RGB}{31, 119, 180}
+\definecolor{chartred}{RGB}{214, 39, 40}
+
+% --- HYPERREF SETUP ---
+\hypersetup{
+    colorlinks=true,
+    linkcolor=tumblue,
+    citecolor=tumblue,
+    urlcolor=tumblue
+}
+
+% --- LISTINGS SETUP ---
+\lstset{
+    language=[Sharp]C,
+    backgroundcolor=\color{codebg},
+    frame=single,
+    rulecolor=\color{codeframe},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{tumblue}\bfseries,
+    commentstyle=\color{gray}\itshape,
+    stringstyle=\color{chartred},
+    breaklines=true,
+    showstringspaces=false,
+    captionpos=b,
+    numbers=left,
+    numberstyle=\tiny\color{gray}
+}
+\lstdefinestyle{terminal}{
+    language={},
+    numbers=none,
+    basicstyle=\ttfamily\scriptsize
+}
+
+\begin{document}
+
+% ==============================================================================
+% TITLE PAGE / COVER
+% ==============================================================================
+\begin{titlepage}
+    \centering
+
+    % Antet: logo în stânga, text în dreapta, aliniate pe centru vertical
+    \IfFileExists{utm_logo.png}{%
+        \noindent
+        \begin{minipage}[c]{0.20\textwidth}
+            \centering
+            \includegraphics[height=2.6cm]{utm_logo.png}
+        \end{minipage}%
+        \hfill
+        \begin{minipage}[c]{0.78\textwidth}
+            \centering
+            {\bfseries\Large TECHNICAL UNIVERSITY OF MOLDOVA \par}
+            \vspace{0.15cm}
+            {\large Faculty of Computers, Informatics and Microelectronics \par}
+            \vspace{0.1cm}
+            {\large Department of Software Engineering and Automatics \par}
+        \end{minipage}%
+    }{%
+        % Dacă logo-ul lipsește, textul rămâne centrat pe toată lățimea
+        {\bfseries\Large TECHNICAL UNIVERSITY OF MOLDOVA \par}
+        \vspace{0.15cm}
+        {\large Faculty of Computers, Informatics and Microelectronics \par}
+        \vspace{0.1cm}
+        {\large Department of Software Engineering and Automatics \par}
+    }
+
+    \vspace{2.0cm}
+
+    % Main Title Block
+    {\Large\bfseries LABORATORY WORK NO. 3 \par}
+    \vspace{0.4cm}
+    {\LARGE\bfseries A Local Network Chat: UDP Sockets,\\Multicast, Peer Discovery and Encrypted\\Private Messages \par}
+    \vspace{0.3cm}
+    {\large\textbf{Course:} Network Programming \par}
+
+    \vspace{2.2cm}  \\[5cm]
+
+    % Metadata Block
+    \noindent
+    \begin{minipage}[t]{0.48\textwidth}
+        \raggedright \large
+        \textbf{Authors:} \\[0.15cm]
+        Students of group FAF-241 \\[0.15cm]
+        Corina Coșneanu \& Alexandrina Ciur
+    \end{minipage}%
+    \hfill
+    \begin{minipage}[t]{0.48\textwidth}
+        \raggedleft \large
+        \textbf{Verified by:} \\[0.15cm]
+        Lecturer / Supervisor \\[0.15cm]
+        Fiștic Cristofor
+    \end{minipage}
+
+    \vfill
+
+    % Location & Year
+    {\large Chi\textcommabelow{s}in\u{a}u, 2026 \par}
+\end{titlepage}
+
+% ==============================================================================
+% TABLE OF CONTENTS
+% ==============================================================================
+\newpage
+\tableofcontents
+\newpage
+
+% ==============================================================================
+% SECTION 1: INTRODUCTION
+% ==============================================================================
+\section{Introduction and Laboratory Objectives}
+The previous laboratory work used TCP, a connection-oriented protocol with one server and many clients. This work goes to the other end: a chat for the local network built directly on UDP datagrams, with \textbf{no server at all}. Every running copy of the program is a \emph{peer} that both sends and receives, finds the other peers by itself and talks to them either all at once or one by one.
+
+The primary objectives of this laboratory work are:
+\begin{enumerate}
+    \item \textbf{Use the raw socket API for UDP:} create, bind, configure and use datagram sockets with the \texttt{Socket} class (\texttt{SocketType.Dgram}) only, without \texttt{UdpClient} or any messaging library.
+    \item \textbf{Task 1 -- General channel:} deliver one line typed by the user to every peer with a single datagram, sent to a multicast group.
+    \item \textbf{Task 2 -- Who is online:} discover the other peers without a server, keep the names unique and detect peers that leave or crash.
+    \item \textbf{Task 3 -- Private messages:} deliver a message to exactly one peer, even when several peers share the chat port on the same computer.
+    \item \textbf{Task 4 -- Secure private messages:} derive a key from a shared passphrase and encrypt every private message with authenticated encryption.
+    \item \textbf{Robustness:} log every datagram that is sent, received or dropped, and never crash because of an invalid datagram.
+\end{enumerate}
+
+% ==============================================================================
+% SECTION 2: HARDWARE & ENVIRONMENT
+% ==============================================================================
+\section{Hardware and Environment Specifications}
+The chat was developed and tested on the system described in Table~\ref{tab:hardware_specs}. All test peers ran as separate processes on this machine, connected to the same Wi-Fi network (address \texttt{172.20.10.10}).
+
+\begin{table}[h]
+\centering
+\caption{Test Environment}
+\label{tab:hardware_specs}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Component} & \textbf{Value} \\ \midrule
+Host Model & Apple MacBook Pro (Mac17,9) \\
+Processor (CPU) & Apple M5 Pro, 15 cores \\
+System Memory & 48 GB \\
+Operating System & macOS 26.7.3 \\
+Language \& SDK & C\# / .NET SDK 11.0.100 (project targets \texttt{net10.0}, roll-forward) \\
+Network & Wi-Fi, IPv4, multicast group \texttt{239.255.42.42} \\ \bottomrule
+\end{tabular}
+\end{table}
+
+The program is cross-platform: the same code runs on Windows and Linux. At the defense it is shown with at least three peers on at least two computers; if the Wi-Fi network blocks multicast, the hotspot of a phone is used.
+
+% ==============================================================================
+% SECTION 3: THEORETICAL BACKGROUND
+% ==============================================================================
+\section{Theoretical Background}
+
+\subsection{UDP vs. TCP}
+\textbf{UDP} (User Datagram Protocol) sends independent \emph{datagrams}, without a connection. Compared to TCP it does not promise delivery, ordering, absence of duplicates, flow control or congestion control, and nobody is notified when the other side disappears. In exchange, UDP keeps \textbf{message boundaries}: one \texttt{sendto} is always exactly one \texttt{recvfrom}. Therefore the chat needs neither a delimiter nor a length prefix, unlike the line protocol of Laboratory Work 2.
+
+The UDP header has 8 bytes: source port, destination port, length and checksum. A datagram can carry at most $65\,535 - 8 - 20 = 65\,507$ bytes of data over IPv4, but on an Ethernet/Wi-Fi network with an MTU of 1500 bytes, a datagram larger than about 1400 bytes is fragmented by IP, and losing any single fragment loses the whole datagram.
+
+\subsection{Unicast, Broadcast and Multicast}
+\begin{itemize}
+    \item \textbf{Unicast:} the datagram goes to one endpoint (IP address + port).
+    \item \textbf{Broadcast:} the datagram goes to the broadcast address of the network (e.g.\ \texttt{255.255.255.255}) and is received by \emph{every} host of the local network, interested or not. The socket must enable \texttt{SO\_BROADCAST}.
+    \item \textbf{Multicast:} the datagram goes to a group address from \texttt{224.0.0.0/4}. Only the sockets that joined the group (\texttt{IP\_ADD\_MEMBERSHIP}) receive it. The range \texttt{239.0.0.0/8} is reserved for local (administratively scoped) use.
+\end{itemize}
+
+\subsection{Several Sockets on One Port}
+Normally only one socket can bind a given port. With \texttt{SO\_REUSEADDR} (in .NET \texttt{SocketOptionName.ReuseAddress}, which on macOS and Linux also sets \texttt{SO\_REUSEPORT}) several sockets may share it. A multicast or broadcast datagram is delivered to \textbf{all} the sockets bound to the port, but a unicast datagram reaches only \textbf{one} of them. This single rule shapes the whole design of the private messages.
+
+\subsection{Peer-to-Peer Discovery}
+Without a server nobody holds the list of participants, so every peer builds its own. A new peer announces itself to the group and the others answer it directly. Since UDP has no connection, a peer whose process is killed sends nothing at all; the others can only notice its silence, using periodic \emph{heartbeat} messages and a timeout.
+
+\subsection{Key Derivation and Authenticated Encryption}
+A passphrase cannot be used directly as a key: its length varies and it has little entropy. A \textbf{key-derivation function} such as \textbf{PBKDF2} turns the passphrase and a salt into a fixed-length key by iterating an HMAC many times, so every guess of an attacker becomes slow.
+
+\textbf{AES-GCM} is an authenticated encryption mode (AEAD). Besides the ciphertext it produces a 16-byte \textbf{tag} that depends on the key, the nonce, the ciphertext and optional \emph{associated data}. If a single bit is changed, the tag no longer matches and decryption fails. The 12-byte \textbf{nonce} must never be reused with the same key: two messages with the same nonce leak the XOR of their plaintexts and allow tags to be forged.
+
+% ==============================================================================
+% SECTION 4: SYSTEM ARCHITECTURE
+% ==============================================================================
+\section{System Architecture and Implementation}
+The chat is one C\# console program that uses only the \texttt{Socket} class. Every class has one responsibility and every function does one thing.
+
+\begin{table}[h]
+\centering
+\caption{Source Files}
+\label{tab:files}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{File} & \textbf{Responsibility} \\ \midrule
+\texttt{Program.cs} & reads and validates the command-line arguments \\
+\texttt{Chat.cs} & the peer: keyboard, commands, handling of every message type, heartbeat and timeout \\
+\texttt{Network.cs} & creates the two sockets and sends datagrams \\
+\texttt{Message.cs} & the message format: JSON serialization and validation \\
+\texttt{Peers.cs} & the list of online peers (name, id, endpoint, last seen), under a lock \\
+\texttt{Crypto.cs} & PBKDF2 key derivation and AES-GCM encryption \\
+\texttt{Log.cs} & the per-peer log file \\ \bottomrule
+\end{tabularx}
+\end{table}
+
+The program is started as \texttt{dotnet run -- <name> <port> <passphrase>}. The main thread reads the keyboard; four background threads run in parallel: one receive loop for each socket, one heartbeat loop and one timeout loop. Incoming messages are therefore printed as soon as they arrive, even while the user is typing.
+
+\subsection{Two Sockets per Peer}
+Each peer opens two sockets (Table~\ref{tab:sockets}). The \textbf{group socket} shares the chat port with the other peers of the computer and receives the general channel. The \textbf{direct socket} is bound to port 0, so the operating system gives it a free, unique port; every datagram is sent from it, and private messages arrive on it.
+
+\begin{table}[h]
+\centering
+\caption{Sockets of One Peer}
+\label{tab:sockets}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Socket} & \textbf{Bound to} & \textbf{Used for} \\ \midrule
+group & \texttt{0.0.0.0:<chat port>}, \texttt{ReuseAddress}, joined to \texttt{239.255.42.42} & receives the general channel \\
+direct & \texttt{0.0.0.0:0} (port chosen by the OS) & sends everything; receives private messages and replies \\ \bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{lstlisting}[caption={Creating the two sockets (\texttt{Network.cs})}]
+static Socket CreateGroupSocket(int port)
+{
+    Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+    // fara asta al 2-lea peer pe acelasi pc ia "address already in use". trebuie INAINTE de bind
+    socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+    // 0.0.0.0 = primesc pe toate placile de retea (wifi, cablu, loopback), nu doar pe un ip
+    socket.Bind(new IPEndPoint(IPAddress.Any, port));
+    // intru in grupul multicast, altfel kernelul nu-mi da datagramele trimise la 239.255.42.42
+    socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership,
+        new MulticastOption(Group, IPAddress.Any));
+    return socket;
+}
+
+static Socket CreateDirectSocket()
+{
+    Socket socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+    // port 0 = sistemul alege unul liber. e unic, deci un privat trimis aici ajunge doar la mine
+    socket.Bind(new IPEndPoint(IPAddress.Any, 0));
+    socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
+    return socket;
+}
+\end{lstlisting}
+
+Because every datagram leaves from the direct socket, the receiver sees the sender's unique endpoint in \texttt{ReceiveFrom} and can use it to reply or to send private messages later.
+
+\subsection{Message Format and Validation}
+Each datagram carries exactly one JSON message, for example:
+
+\begin{lstlisting}[style=terminal]
+{"type":"general","from":"Ana","id":"3f2a9c1b","text":"hello everyone"}
+\end{lstlisting}
+
+The \texttt{id} field is random for every process. Table~\ref{tab:messages} lists all message types.
+
+\begin{table}[h]
+\centering
+\caption{Message Types}
+\label{tab:messages}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Type} & \textbf{Sent to} & \textbf{Meaning} \\ \midrule
+\texttt{join} & group & I just started \\
+\texttt{here} & the new peer & answer to \texttt{join}: I am online too \\
+\texttt{taken} & the new peer & answer to \texttt{join}: your name is already used \\
+\texttt{alive} & group & heartbeat, every 5 seconds \\
+\texttt{bye} & group & I left with \texttt{/quit} \\
+\texttt{general} & group & message for everybody \\
+\texttt{private} & one peer & encrypted private message (\texttt{text} + \texttt{nonce}) \\ \bottomrule
+\end{tabularx}
+\end{table}
+
+A received datagram passes three checks: size, JSON deserialization and the presence of the required fields. If any check fails, the datagram is dropped and logged with the reason.
+
+\begin{lstlisting}[caption={Validating a datagram (\texttt{Message.cs})}]
+public static Message? Parse(byte[] buffer, int length, out string error)
+{
+    error = "too long";
+    if (length > MaxBytes) return null;
+
+    error = "not a chat message";
+    Message? message = TryDeserialize(buffer, length);
+    if (message == null) return null;
+
+    error = message.FindProblem();
+    if (error != "") return null;
+
+    message.Size = length;
+    return message;
+}
+
+// json corect nu inseamna mesaj corect: verific campurile de care am nevoie
+string FindProblem()
+{
+    if (!MessageType.All.Contains(Type)) return "unknown type";
+    if (string.IsNullOrEmpty(From) || From.Length > MaxNameLength) return "bad name";
+    if (string.IsNullOrEmpty(Id)) return "no id";
+    if (Type == MessageType.General && (Text == null || Text.Length > MaxTextLength)) return "bad text";
+    if (Type == MessageType.Private && (Text == null || Nonce == null)) return "bad private";
+    return "";
+}
+\end{lstlisting}
+
+\subsection{Task 1: The General Channel}
+A general message is sent once, to the multicast group. Multicast loops back to the sender, so the author does not print the message when sending it, but when it comes back from the network; this way it appears exactly once. A peer recognises its own messages by their \texttt{id}.
+
+\begin{lstlisting}[caption={Sending and dispatching messages (\texttt{Chat.cs})}]
+void SendGeneral(string text)
+{
+    if (!FitsLength(text)) return;
+    // nu il afisez aici: il afisez cand se intoarce din retea (ecoul), asa apare o singura data
+    net.SendToAll(NewMessage(MessageType.General, text));
+}
+
+void Handle(Message message, EndPoint from)
+{
+    if (message.Id == myId) OnMyEcho(message);
+    else if (message.From == myName) OnSameName(message, from);
+    else OnOtherPeer(message, from);
+}
+\end{lstlisting}
+
+\subsection{Task 2: Who Is Online}
+On start-up a peer sends \texttt{join} to the group and waits one second. Every peer that receives \texttt{join} adds the newcomer and answers it directly with \texttt{here}, so the newcomer knows everybody within milliseconds. A peer that already owns the name answers \texttt{taken} instead, and the newcomer does not join.
+
+\begin{lstlisting}[caption={Joining and keeping the names unique}]
+bool Join()
+{
+    net.SendToAll(NewMessage(MessageType.Join));
+    Thread.Sleep(JoinWait);
+
+    if (nameTaken)
+    {
+        Console.WriteLine($"* the name {myName} is already used, choose another one");
+        net.SendToAll(NewMessage(MessageType.Bye));
+        return false;
+    }
+    Console.WriteLine($"* you joined the chat as {myName}");
+    ShowUsers();
+    return true;
+}
+
+// alt proces cu numele meu. daca pornesc 2 deodata, fiecare primeste join-ul celuilalt -> ies amandoi
+void OnSameName(Message message, EndPoint from)
+{
+    if (message.Type == MessageType.Join) net.SendTo(NewMessage(MessageType.Taken), from);
+    if (message.Type == MessageType.Taken) nameTaken = true;
+}
+\end{lstlisting}
+
+Every 5 seconds each peer sends \texttt{alive}. A separate thread checks the list every second; a peer silent for 15 seconds (three heartbeats lost in a row) is considered gone. A peer that leaves with \texttt{/quit} sends \texttt{bye} and disappears from the lists at once.
+
+\begin{lstlisting}[caption={Heartbeat and timeout}]
+void HeartbeatLoop()
+{
+    while (running)
+    {
+        Thread.Sleep(HeartbeatEvery);
+        if (running) net.SendToAll(NewMessage(MessageType.Alive));
+    }
+}
+
+void TimeoutLoop()
+{
+    while (running)
+    {
+        Thread.Sleep(1000);
+        foreach (string name in peers.RemoveSilentFor(GoneAfter))
+        {
+            Console.WriteLine($"* {name} left the chat (no news for {GoneAfter.TotalSeconds} s)");
+        }
+    }
+}
+\end{lstlisting}
+
+The \texttt{Peers} list is used by several threads, so all its operations are under a \texttt{lock}. A peer is added only if its name is not already known with a different \texttt{id}, and \texttt{bye} removes a peer only if the \texttt{id} matches.
+
+\subsection{Task 3: Private Messages}
+A private message is a single unicast datagram, sent to the direct socket of the receiver, whose endpoint is taken from the list of online peers. A name that is not online gets an error message.
+
+\begin{lstlisting}[caption={Sending a private message}]
+void SendPrivate(string nameAndText)
+{
+    string[] parts = nameAndText.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length < 2)
+    {
+        Console.WriteLine("* usage: /msg name text");
+        return;
+    }
+    string to = parts[0];
+    string text = parts[1];
+    if (!FitsLength(text)) return;
+
+    EndPoint? endPoint = peers.FindEndPoint(to);
+    if (endPoint == null)
+    {
+        Console.WriteLine($"* {to} is not online");
+        return;
+    }
+    // un singur unicast direct la el, nu la toti cu numele lui inauntru
+    net.SendTo(NewPrivate(text), endPoint);
+    Console.WriteLine($"[private to {to}] {myName}: {text}");
+}
+\end{lstlisting}
+
+\subsection{Task 4: Secure Private Messages}
+The 256-bit key is derived from the passphrase with PBKDF2-HMAC-SHA256 and 200\,000 iterations. The salt is fixed, because all peers must reach the same key without exchanging anything. Every private message is encrypted with AES-256-GCM under a fresh random 12-byte nonce. The author's name is passed as associated data: it is not encrypted, but changing it on the way breaks the tag.
+
+\begin{lstlisting}[caption={Key derivation and encryption (\texttt{Crypto.cs})}]
+public Crypto(string passphrase)
+{
+    key = Rfc2898DeriveBytes.Pbkdf2(passphrase, Salt, Iterations, HashAlgorithmName.SHA256, KeySize);
+}
+
+public (string nonce, string data) Encrypt(string text, string author)
+{
+    // nonce random, nou la fiecare mesaj. acelasi nonce de 2 ori cu aceeasi cheie = gcm e spart
+    byte[] nonce = RandomNumberGenerator.GetBytes(NonceSize);
+    byte[] plain = Encoding.UTF8.GetBytes(text);
+    byte[] cipher = new byte[plain.Length];
+    byte[] tag = new byte[TagSize];
+
+    using AesGcm aes = new AesGcm(key, TagSize);
+    aes.Encrypt(nonce, plain, cipher, tag, Encoding.UTF8.GetBytes(author));
+
+    return (Convert.ToBase64String(nonce), Convert.ToBase64String(cipher.Concat(tag).ToArray()));
+}
+\end{lstlisting}
+
+On decryption, a wrong passphrase or a modified message raises \texttt{CryptographicException}; the function returns \texttt{null} and the message is dropped and logged as \texttt{cannot decrypt}. The general channel is not encrypted.
+
+\subsection{Logging}
+Each peer writes \texttt{chat-<name>.log} with one line per datagram: time, action (\texttt{sent}, \texttt{received}, \texttt{dropped}), endpoint, message type or drop reason, and size. Writing is under a lock, because the log is used by several threads.
+
+% ==============================================================================
+% SECTION 5: EXPERIMENTAL RESULTS
+% ==============================================================================
+\section{Experimental Results}
+Five processes were started on the test machine, all on chat port 5077: Ana, Ion and Maria with the passphrase \texttt{secret}, a second process named \texttt{Ana}, and Eve with a wrong passphrase. Table~\ref{tab:tests} summarises the scenarios.
+
+\begin{table}[h]
+\centering
+\caption{Test Scenarios}
+\label{tab:tests}
+\begin{tabularx}{\textwidth}{@{}XXl@{}}
+\toprule
+\textbf{Scenario} & \textbf{Observed behaviour} & \textbf{Result} \\ \midrule
+General message from Ana & shown by all 4 peers, once by Ana & passed \\
+\texttt{/msg Ion} from Ana & shown only by Ion, not by Maria or Eve on the same computer & passed \\
+\texttt{/msg Nimeni} & \texttt{* Nimeni is not online} & passed \\
+Second process named Ana & told the name is used, does not join & passed \\
+Maria killed with \texttt{kill -9} & others print ``left the chat'' after 15 s & passed \\
+Peers leave with \texttt{/quit} & removed from the lists at once & passed \\
+4 foreign datagrams on the chat port & dropped and logged, chat keeps working & passed \\
+Private message from Eve (wrong key) & dropped as \texttt{cannot decrypt} & passed \\ \bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{General Channel, Private Messages and the List of Peers}
+
+\begin{lstlisting}[style=terminal, caption={Console of Ana}]
+* you joined the chat as Ana
+* online: 1
+*   Ana (you)
+* commands: text | /msg name text | /users | /quit
+* Ion joined the chat
+* Maria joined the chat
+* Eve joined the chat
+salut tuturor
+[general] Ana: salut tuturor
+/msg Ion ne vedem la 5
+[private to Ion] Ana: ne vedem la 5
+[private] Ion: am primit
+/msg Nimeni hei
+* Nimeni is not online
+/users
+* online: 4
+*   Ana (you)
+*   Eve 172.20.10.10:65056
+*   Ion 172.20.10.10:49595
+*   Maria 172.20.10.10:56474
+* Maria left the chat (no news for 15 s)
+* Eve left the chat
+\end{lstlisting}
+
+\begin{lstlisting}[style=terminal, caption={Console of Ion}]
+* Maria joined the chat
+* you joined the chat as Ion
+* online: 3
+*   Ion (you)
+*   Ana 172.20.10.10:60230
+*   Maria 172.20.10.10:56474
+* commands: text | /msg name text | /users | /quit
+* Eve joined the chat
+[general] Ana: salut tuturor
+[private] Ana: ne vedem la 5
+/msg Ana am primit
+[private to Ana] Ion: am primit
+* Maria left the chat (no news for 15 s)
+* Eve left the chat
+* Ana left the chat
+\end{lstlisting}
+
+Every peer has a different direct port in the list, although all of them share chat port 5077. This is why the private message to Ion did not reach Maria or Eve.
+
+\subsection{Duplicate Name}
+
+\begin{lstlisting}[style=terminal, caption={The second process named Ana}]
+* the name Ana is already used, choose another one
+\end{lstlisting}
+
+\subsection{Invalid Datagrams and Wrong Passphrase}
+Four foreign datagrams were sent to the chat port: 50 random bytes, 5000 bytes, a JSON with an unknown type and a JSON without an author. Then Eve, who has a different passphrase, sent a private message to Ion. All of them were dropped and the chat kept working.
+
+\begin{lstlisting}[style=terminal, caption={Fragment of \texttt{chat-Ion.log}}]
+20:57:43.444 received 172.20.10.10:60230    general              70 bytes
+20:57:45.457 received 172.20.10.10:60230    private              124 bytes
+20:57:45.534 dropped  172.20.10.10:64757    not a chat message   50 bytes
+20:57:45.534 dropped  172.20.10.10:64757    too long             5000 bytes
+20:57:45.534 dropped  172.20.10.10:64757    unknown type         35 bytes
+20:57:45.534 dropped  172.20.10.10:64757    bad name             30 bytes
+20:57:46.453 sent     172.20.10.10:60230    private              125 bytes
+21:00:15.423 received 172.20.10.10:63704    private              139 bytes
+21:00:15.427 dropped  172.20.10.10:63704    cannot decrypt       139 bytes
+\end{lstlisting}
+
+% ==============================================================================
+% SECTION 6: TASK QUESTIONS
+% ==============================================================================
+\section{Task Questions and Critical Analysis}
+
+\subsection{Task 1 Questions}
+\subsubsection{Q1: Why is the socket bound to 0.0.0.0, and not to the IP address or to 127.0.0.1?}
+With \texttt{0.0.0.0} the socket receives on every interface: Wi-Fi, Ethernet and loopback. Bound to \texttt{127.0.0.1} it would only hear peers on the same computer; bound to one IP address it would depend on that interface and miss datagrams arriving on the others (on some systems, also the multicast ones).
+
+\subsubsection{Q2: How can several peers on the same computer bind the same port? Which of them receive a general message?}
+Each socket sets \texttt{ReuseAddress} before \texttt{Bind}. A general message is multicast, so it is delivered to all the sockets bound to the port, i.e.\ to every peer of the computer.
+
+\subsubsection{Q3: Your own message comes back to you. How does your chat recognise it?}
+Every process has a random \texttt{id}, sent in every message. A message with my own \texttt{id} is my echo: it is printed (once) if it is a general message and ignored otherwise.
+
+\subsubsection{Q4: Why at most 500 characters? What would happen to a message of 100\,000 characters?}
+To keep the datagram below about 1400 bytes, so it is never fragmented. A message of 100\,000 characters exceeds the maximum UDP payload of 65\,507 bytes, so \texttt{sendto} would fail; even below that limit it would be split into dozens of IP fragments and lost entirely if any one of them were lost.
+
+\subsection{Task 2 Questions}
+\subsubsection{Q1: How does a new peer learn who is already online, and how long does it take?}
+It multicasts \texttt{join}, and every peer answers directly with \texttt{here}. The answers arrive within milliseconds; the peer waits one second to be safe.
+
+\subsubsection{Q2: The process of a peer is killed. How and when do the others notice? Why not at once, as a TCP server does?}
+They notice its silence: after 15 seconds without \texttt{alive} it is removed. UDP has no connection, so the operating system sends no FIN or RST when the process dies; there is simply no signal to receive.
+
+\subsubsection{Q3: Two peers start with the same name at the same moment. What happens?}
+Each receives the other's \texttt{join} and answers \texttt{taken}, so both refuse to join and the users have to start again.
+
+\subsection{Task 3 Questions}
+\subsubsection{Q1: Several peers share the chat port. How does a private message reach the right one?}
+It is not sent to the shared port, but to the direct socket of the receiver, whose port is unique.
+
+\subsubsection{Q2: Why is a private message not sent to everybody, with the receiver's name inside?}
+Everybody would receive it and could read it, and it would load the network and every peer for nothing.
+
+\subsubsection{Q3: What happens to a private message sent to a peer that left a second ago?}
+If the peer is still in the list, the datagram is sent and lost. On the same computer the system answers with ICMP \emph{port unreachable}, which the chat ignores.
+
+\subsubsection{Q4: UDP can lose a private message. How could the sender know that it arrived?}
+The receiver would send back an acknowledgement with the message number. Without an acknowledgement within a timeout, the sender would retransmit a few times, and the receiver would discard duplicates by their number.
+
+\subsection{Task 4 Questions}
+\subsubsection{Q1: Why is the key derived with a KDF, and not taken from the bytes of the passphrase?}
+The passphrase has a variable length and low entropy. The KDF produces exactly 32 bytes, and its 200\,000 iterations make every guess of an attacker slow.
+
+\subsubsection{Q2: Which algorithm encrypts the messages? Why must the nonce never repeat, and where does it come from?}
+AES-256-GCM. A repeated nonce with the same key reveals the XOR of the two plaintexts and allows forging tags. The nonce is 12 random bytes from \texttt{RandomNumberGenerator}, new for every message.
+
+\subsubsection{Q3: Who can read a private message between Ana and Ion? What would make it private to the two of them?}
+Everybody who knows the passphrase, i.e.\ any member of the chat who captures the datagram. A key known only to Ana and Ion would be needed, for example agreed with a Diffie--Hellman key exchange.
+
+\subsubsection{Q4: Can somebody without the passphrase change an encrypted message unnoticed?}
+No: the GCM tag would no longer match and the receiver drops the message. The author's name is protected in the same way, as associated data.
+
+% ==============================================================================
+% SECTION 7: CONTROL QUESTIONS
+% ==============================================================================
+\section{Answers to Control Questions}
+
+\subsection{1. Which promises of TCP does UDP not make? Which did the chat rebuild?}
+UDP does not promise delivery, ordering, no duplicates, flow control, or detection of a closed peer. The chat rebuilt the detection of gone peers (heartbeat and timeout) and integrity (the GCM tag). It does without guaranteed delivery and ordering, since every message is independent.
+
+\subsection{2. Why is one sendto always one recvfrom with UDP, but one send is not one receive with TCP?}
+UDP keeps datagram boundaries, while TCP is a byte stream that can merge or split writes. So the chat needs neither a delimiter nor a length prefix.
+
+\subsection{3. How big can a UDP datagram be? Why stay below about 1400 bytes?}
+At most 65\,507 bytes of data over IPv4. Below about 1400 bytes the datagram fits in one Ethernet/Wi-Fi frame (MTU 1500) together with the IP and UDP headers, so it is never fragmented.
+
+\subsection{4. Broadcast vs. multicast: which does the chat use, and what would change?}
+Broadcast reaches every host of the network; multicast only the sockets that joined the group. The chat uses multicast. With broadcast, the group socket would not join a group, the sending socket would enable \texttt{EnableBroadcast}, and every host of the network would receive the datagrams, even those not running the chat.
+
+\subsection{5. How many sockets does the chat use, where are they bound, and why?}
+Two. The group socket is bound to \texttt{0.0.0.0:<chat port>} with \texttt{ReuseAddress} and receives the general channel. The direct socket is bound to \texttt{0.0.0.0:0} so that it gets a unique port; it sends everything and receives the private messages, which on the shared port would reach only one random peer.
+
+\subsection{6. What does the UDP checksum protect against? Why is it not enough against an attacker?}
+It detects accidental transmission errors. It uses no key, so an attacker who changes a datagram simply recomputes it. Protection against deliberate changes needs a keyed MAC, here the GCM tag.
+
+% ==============================================================================
+% SECTION 8: CONCLUSIONS
+% ==============================================================================
+\section{Conclusions}
+This laboratory work produced a server-less local network chat that uses UDP sockets directly:
+\begin{enumerate}
+    \item Multicast delivers a general message to every peer with a single datagram, while private messages are unicast to exactly one endpoint.
+    \item Sharing a port delivers multicast to all sockets but unicast to only one of them; the solution was a second socket per peer, on a unique port, used for sending and for private messages.
+    \item Without a connection there is no signal when a process dies, so the list of online peers relies on announcements, direct answers, heartbeats and a timeout.
+    \item AES-256-GCM with a PBKDF2-derived key keeps private messages unreadable and tamper-evident for anyone outside the chat; a shared passphrase, however, does not protect them from other members of the chat.
+    \item Strict validation and logging of every datagram make the chat robust against foreign or malformed traffic.
+\end{enumerate}
+
+% ==============================================================================
+% SECTION 9: CODE AND BUILD INSTRUCTIONS
+% ==============================================================================
+\section{Source Code and Build Instructions}
+The complete source code is maintained in the GitHub repository:
+\begin{center}
+\url{https://github.com/corinacc555/Programare-in-retea/tree/lab3/lab3}
+\end{center}
+
+\subsection{Build and Execution Commands}
+Commands to compile and run the chat using the .NET CLI:
+
+\begin{lstlisting}[language=bash, caption={CLI Commands for Build and Execution}]
+# Navigate to the laboratory folder
+cd lab3
+
+# Build the project
+dotnet build
+
+# Start a peer: name, chat port, passphrase
+dotnet run -- <name> <port> <passphrase>
+
+# Example: three peers of one chat (in three terminals or on three computers)
+dotnet run -- Ana 5000 secret
+dotnet run -- Ion 5000 secret
+dotnet run -- Maria 5000 secret
+
+# Commands inside the chat
+#   text              message for everybody
+#   /msg name text    private message
+#   /users            who is online
+#   /quit             leave the chat
+\end{lstlisting}
+
+\end{document}
