@@ -10,6 +10,10 @@ public class Chat
     static readonly TimeSpan JoinWait = TimeSpan.FromSeconds(1);
     static readonly TimeSpan HeartbeatEvery = TimeSpan.FromSeconds(5);
     static readonly TimeSpan GoneAfter = TimeSpan.FromSeconds(15);
+    // un alive pierdut (5 s) + marja -> "not responding", inainte sa fie scos la 15 s
+    static readonly TimeSpan NotRespondingAfter = TimeSpan.FromSeconds(7);
+    // programul merge, dar omul n-a scris nimic de atata timp -> "inactive"
+    static readonly TimeSpan InactiveAfter = TimeSpan.FromSeconds(60);
 
     readonly string myName;
     // id random per proces: cu el imi recunosc ecoul si deosebesc 2 procese cu acelasi nume
@@ -21,6 +25,7 @@ public class Chat
 
     volatile bool running = true;
     volatile bool nameTaken = false;
+    DateTime lastTyped = DateTime.Now;   // ultima linie scrisa de mine; o trimit in fiecare mesaj ca "idle"
 
     public Chat(string name, int port, string passphrase)
     {
@@ -53,7 +58,8 @@ public class Chat
 
     Message NewMessage(string type, string? text = null)
     {
-        return new Message { Type = type, From = myName, Id = myId, Text = text };
+        int idle = (int)(DateTime.Now - lastTyped).TotalSeconds;
+        return new Message { Type = type, From = myName, Id = myId, Text = text, Idle = idle };
     }
 
     // ---------- intrare / iesire ----------
@@ -93,6 +99,7 @@ public class Chat
             if (line == null) return;   // ctrl+d / stdin inchis
             line = line.Trim();
             if (line == "/quit") return;
+            if (line != "") lastTyped = DateTime.Now;
             HandleLine(line);
         }
     }
@@ -158,8 +165,21 @@ public class Chat
         Console.WriteLine($"*   {myName} (you)");
         foreach (Peer peer in others)
         {
-            Console.WriteLine($"*   {peer.Name} {peer.EndPoint}");
+            Console.WriteLine($"*   {peer.Name} {peer.EndPoint}  {Status(peer)}");
         }
+    }
+
+    static string Status(Peer peer)
+    {
+        if (peer.NotResponding) return $"not responding ({Duration(DateTime.Now - peer.LastSeen)})";
+        if (peer.Inactive) return $"inactive ({Duration(DateTime.Now - peer.LastTyped)})";
+        return "active";
+    }
+
+    static string Duration(TimeSpan time)
+    {
+        if (time.TotalMinutes < 1) return $"{time.Seconds} s";
+        return $"{(int)time.TotalMinutes} min {time.Seconds} s";
     }
 
     // ---------- primire ----------
@@ -219,6 +239,9 @@ public class Chat
 
     void OnOtherPeer(Message message, EndPoint from)
     {
+        if (message.Type != MessageType.Bye && peers.Heard(message.From, message.Id))
+            Console.WriteLine($"* {message.From} is responding again");
+
         switch (message.Type)
         {
             case MessageType.Join: OnJoin(message, from); break;
@@ -228,6 +251,16 @@ public class Chat
             case MessageType.General: ShowGeneral(message); break;
             case MessageType.Private: ShowPrivate(message, from); break;
         }
+
+        // dupa switch, ca un peer nou (join/here) sa fie deja in lista
+        if (message.Type != MessageType.Bye && message.Idle != null) UpdateIdle(message);
+    }
+
+    void UpdateIdle(Message message)
+    {
+        bool? change = peers.SetIdle(message.From, message.Id, TimeSpan.FromSeconds(message.Idle!.Value), InactiveAfter);
+        if (change == true) Console.WriteLine($"* {message.From} is inactive (nothing typed for {Duration(TimeSpan.FromSeconds(message.Idle.Value))})");
+        if (change == false) Console.WriteLine($"* {message.From} is active again");
     }
 
     // cineva nou: il adaug si ii raspund direct, ca sa afle de mine acum, nu peste 5 s
@@ -282,6 +315,10 @@ public class Chat
         while (running)
         {
             Thread.Sleep(1000);
+            foreach (string name in peers.MarkNotResponding(NotRespondingAfter))
+            {
+                Console.WriteLine($"* {name} is not responding (no news for {NotRespondingAfter.TotalSeconds} s)");
+            }
             foreach (string name in peers.RemoveSilentFor(GoneAfter))
             {
                 Console.WriteLine($"* {name} left the chat (no news for {GoneAfter.TotalSeconds} s)");

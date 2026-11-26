@@ -26,7 +26,7 @@ the hotspot of a phone.
 |---|---|
 | `text` | sends text to everybody (general channel) |
 | `/msg name text` | sends text to `name` only (private, encrypted) |
-| `/users` | shows who is online |
+| `/users` | shows who is online and their status (active / inactive / not responding) |
 | `/quit` | leaves the chat |
 
 A message has at most 500 characters. Each peer writes `chat-<name>.log`: one line for every
@@ -57,6 +57,11 @@ Every datagram is one JSON message, for example:
 | `general` | group | message for everybody |
 | `private` | one peer | `text` = AES-GCM ciphertext + tag (base64), plus `nonce` |
 
+- Every message also carries `idle`: how many seconds ago its author last typed a line.
+- `/users` shows a status for each peer, and changes are announced in the chat:
+  - `active`;
+  - `inactive (1 min 20 s)`: the program runs, but nothing was typed for 60 s;
+  - `not responding (9 s)`: no datagram for 7 s (an `alive` was lost); after 15 s the peer is removed.
 - `id` is random for each process. A peer recognises its own messages by it (multicast comes
   back to the sender), and tells apart two processes that use the same name.
 - The key is derived from the passphrase with PBKDF2-SHA256 (200 000 iterations, 32 bytes).

@@ -28,6 +28,7 @@ public class Message
     public string Id { get; set; } = "";      // random per proces, Chat.myId
     public string? Text { get; set; }         // la private: textul criptat, in base64
     public string? Nonce { get; set; }        // doar la private
+    public int? Idle { get; set; }            // de cate secunde autorul n-a mai scris nimic la tastatura
 
     [JsonIgnore]
     public int Size { get; private set; }     // cati bytes a avut datagrama, pt log
@@ -77,6 +78,7 @@ public class Message
         if (string.IsNullOrEmpty(Id)) return "no id";
         if (Type == MessageType.General && (Text == null || Text.Length > MaxTextLength)) return "bad text";
         if (Type == MessageType.Private && (Text == null || Nonce == null)) return "bad private";
+        if (Idle < 0) return "bad idle";
         return "";
     }
 }
