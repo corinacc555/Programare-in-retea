@@ -70,7 +70,7 @@ public class Chat
             net.SendToAll(NewMessage(MessageType.Bye));
             return false;
         }
-        Console.WriteLine($"* you joined the chat as {myName}");
+        Console.WriteLine($"* you joined the chat as {myName} (ip {net.LocalAddress})");
         ShowUsers();
         return true;
     }
